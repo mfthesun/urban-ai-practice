@@ -174,6 +174,16 @@ top_rows = "".join(
     for idx, row in top.iterrows()
 )
 
+density_rows = "".join(
+    f"<tr><td>{label}</td><td>{built[col].median():.2f}</td><td>{built[col].mean():.2f}</td>"
+    f"<td>{built[col].min():.2f}</td><td>{built[col].max():.2f}</td></tr>"
+    for label, col in (("FSI — площадь этажей / площадь квартала", "fsi"),
+                       ("GSI — доля застроенной земли", "gsi"),
+                       ("MXI — смешанность функций", "mxi"),
+                       ("OSR — открытые пространства", "osr"))
+    if col in built.columns
+)
+
 METRICS_TABLE = """
 <table>
 <thead><tr><th>Показатель</th><th>Что означает</th><th>Единицы</th><th>Источник</th></tr></thead>
@@ -264,6 +274,17 @@ page = f"""<!DOCTYPE html>
     <div class="card"><canvas id="fsi" height="220"></canvas></div>
     <div class="card"><canvas id="spacematrix" height="220"></canvas></div>
     <div class="card"><canvas id="strelka" height="220"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h3>Плотность застройки: статистика по застроенным кварталам</h3>
+    <table>
+      <thead><tr><th>Показатель</th><th>Медиана</th><th>Среднее</th><th>Мин</th><th>Макс</th></tr></thead>
+      <tbody>{density_rows}</tbody>
+    </table>
+    <div class="note" style="margin-top:12px;font-size:13px">Экстремальные значения OSR
+    (от −0,5 до 731) — следствие деления на малую площадь этажей в отдельных кварталах;
+    ориентируйтесь на медиану.</div>
   </div>
 
   <div class="card"><h3>Что означают показатели</h3>{METRICS_TABLE}</div>
