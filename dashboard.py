@@ -121,8 +121,9 @@ def lu_style(feature):
 
 
 lu_layer = folium.FeatureGroup(name="Землепользование (OSM)", show=True)
-folium.GeoJson(g[["geometry", "land_use"]].to_json(), style_function=lu_style,
-               tooltip=folium.GeoJsonTooltip(fields=["land_use"], aliases=["Функция"])).add_to(lu_layer)
+folium.GeoJson(g[["geometry", "land_use", "land_use_source"]].to_json(), style_function=lu_style,
+               tooltip=folium.GeoJsonTooltip(fields=["land_use", "land_use_source"],
+                                              aliases=["Функция", "Источник"])).add_to(lu_layer)
 lu_layer.add_to(m)
 
 if len(schools):
@@ -137,10 +138,17 @@ folium.LayerControl(collapsed=False).add_to(m)
 map_iframe = m._repr_html_()
 
 # ------------------------------------------------------------------ данные графиков
-lu_counts = (blocks["land_use"].astype(str)
-             .str.replace("LandUse.", "", regex=False)
-             .replace({"None": "нет метки", "nan": "нет метки"})
-             .value_counts())
+lu_norm = (blocks["land_use"].astype(str)
+           .str.replace("LandUse.", "", regex=False)
+           .replace({"None": "нет данных", "nan": "нет данных"}))
+source = blocks.get("land_use_source", pd.Series("osm", index=blocks.index)).fillna("none")
+osm_counts = lu_norm[source == "osm"].value_counts()
+est_counts = lu_norm[source == "buildings"].value_counts()
+lu_labels = sorted(set(osm_counts.index) | set(est_counts.index))
+lu_osm = [int(osm_counts.get(c, 0)) for c in lu_labels]
+lu_est = [int(est_counts.get(c, 0)) for c in lu_labels]
+lu_osm_total = int((source == "osm").sum())
+lu_est_total = int((source == "buildings").sum())
 sm_counts = blocks["spacematrix"].fillna("нет данных").astype(str).value_counts()
 provision_bins = pd.cut(built["provision_strong"].fillna(0),
                         bins=[-0.01, 0.0001, 0.25, 0.5, 0.75, 1.0],
@@ -149,7 +157,7 @@ fsi_hist = pd.cut(built["fsi"], bins=[0, 0.5, 1, 1.5, 2, 3, 5, 100],
                   labels=["<0,5", "0,5–1", "1–1,5", "1,5–2", "2–3", "3–5", ">5"]).value_counts().sort_index()
 
 charts = {
-    "land_use": {"labels": list(lu_counts.index), "values": [int(v) for v in lu_counts.values]},
+    "land_use": {"labels": lu_labels, "osm": lu_osm, "estimate": lu_est},
     "spacematrix": {"labels": list(sm_counts.index), "values": [int(v) for v in sm_counts.values]},
     "provision": {"labels": [str(x) for x in provision_bins.index], "values": [int(v) for v in provision_bins.values]},
     "fsi": {"labels": [str(x) for x in fsi_hist.index], "values": [int(v) for v in fsi_hist.values]},
@@ -193,8 +201,9 @@ conclusions = f"""
 то есть модель завышает примерно на 20%: норма 30 м²/чел. и достроенная этажность.</li>
 <li><b>Школы.</b> Оценка вместимости — {ru(capacity)} мест при спросе {ru(demand)} мест.
 Дефицит возникает в {deficit_blocks} кварталах, средняя обеспеченность — {provision_mean}.</li>
-<li><b>Землепользование.</b> OSM размечает не все кварталы, поэтому доли функций описывают
-только размеченную часть выборки; для остальных функция не определена.</li>
+<li><b>Землепользование.</b> Зоны OSM дают функцию только {lu_osm_total} кварталам, ещё {lu_est_total}
+получили оценку по составу застройки (>= 50% зданий одного типа). Без метки остались кварталы без зданий —
+мелкие осколки улиц, они занимают 8% площади.</li>
 </ul>
 """
 
@@ -265,9 +274,7 @@ page = f"""<!DOCTYPE html>
     </table>
   </div>
 
-  <div class="note">Ограничения: границы кварталов построены по осям улиц, а не по кадастру;
-  землепользование размечено только там, где в OSM есть landuse; доступность считается только пешком,
-  без общественного транспорта и рельефа.</div>
+  <div class="note">Ограничения: границы кварталов построены по осям улиц, а не по кадастру;<n  землепользование взято из OSM там, где есть зоны, иначе оценено по составу застройки (помечено в подсказке);<n  доступность считается только пешком, без общественного транспорта и рельефа.</div>
 </div>
 <script>
 const DATA = {json.dumps(charts, ensure_ascii=False)};
@@ -283,7 +290,19 @@ function draw(id, title, obj, horizontal) {{
     }}
   }});
 }}
-draw('landuse', 'Землепользование: число кварталов', DATA.land_use, true);
+new Chart(document.getElementById('landuse'), {{
+  type: 'bar',
+  data: {{ labels: DATA.land_use.labels, datasets: [
+    {{ label: 'OSM', data: DATA.land_use.osm, backgroundColor: '#2b6cb0' }},
+    {{ label: 'оценка по застройке', data: DATA.land_use.estimate, backgroundColor: '#90cdf4' }}
+  ] }},
+  options: {{
+    indexAxis: 'y',
+    plugins: {{ title: {{ display: true, text: 'Землепользование: число кварталов', font: {{ size: 14 }} }},
+               legend: {{ position: 'bottom' }} }},
+    scales: {{ x: {{ stacked: true, beginAtZero: true }}, y: {{ stacked: true }} }}
+  }}
+}});
 draw('provision', 'Обеспеченность школами (доля покрытого спроса)', DATA.provision, false);
 draw('fsi', 'Распределение FSI по застроенным кварталам', DATA.fsi, false);
 draw('spacematrix', 'Морфотипы Spacematrix', DATA.spacematrix, true);
