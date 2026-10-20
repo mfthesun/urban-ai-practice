@@ -98,6 +98,7 @@ choropleth("population", "Население (оценка), чел.", ["#fff5eb
 choropleth("provision_strong", "Обеспеченность школами, доля", ["#d73027", "#fee08b", "#1a9850"], 0, 1)
 choropleth("area_accessibility", "Доступность с учётом площади", ["#ffffcc", "#800026"])
 choropleth("median_time_min", "Медианное время пешком, мин", ["#f1eef6", "#045a8d"])
+choropleth("capacity", "Вместимость школ (оценка), мест", ["#f7fcf5", "#00441b"])
 
 LU_COLORS = {
     "RESIDENTIAL": "#1f78b4", "BUSINESS": "#e31a1c", "RECREATION": "#33a02c",
@@ -150,6 +151,7 @@ lu_est = [int(est_counts.get(c, 0)) for c in lu_labels]
 lu_osm_total = int((source == "osm").sum())
 lu_est_total = int((source == "buildings").sum())
 sm_counts = blocks["spacematrix"].fillna("нет данных").astype(str).value_counts()
+st_counts = blocks["strelka"].fillna("нет данных").astype(str).value_counts()
 provision_bins = pd.cut(built["provision_strong"].fillna(0),
                         bins=[-0.01, 0.0001, 0.25, 0.5, 0.75, 1.0],
                         labels=["0", "0–0,25", "0,25–0,5", "0,5–0,75", "0,75–1"]).value_counts().sort_index()
@@ -159,6 +161,7 @@ fsi_hist = pd.cut(built["fsi"], bins=[0, 0.5, 1, 1.5, 2, 3, 5, 100],
 charts = {
     "land_use": {"labels": lu_labels, "osm": lu_osm, "estimate": lu_est},
     "spacematrix": {"labels": list(sm_counts.index), "values": [int(v) for v in sm_counts.values]},
+    "strelka": {"labels": list(st_counts.index), "values": [int(v) for v in st_counts.values]},
     "provision": {"labels": [str(x) for x in provision_bins.index], "values": [int(v) for v in provision_bins.values]},
     "fsi": {"labels": [str(x) for x in fsi_hist.index], "values": [int(v) for v in fsi_hist.values]},
 }
@@ -260,6 +263,7 @@ page = f"""<!DOCTYPE html>
     <div class="card"><canvas id="provision" height="220"></canvas></div>
     <div class="card"><canvas id="fsi" height="220"></canvas></div>
     <div class="card"><canvas id="spacematrix" height="220"></canvas></div>
+    <div class="card"><canvas id="strelka" height="220"></canvas></div>
   </div>
 
   <div class="card"><h3>Что означают показатели</h3>{METRICS_TABLE}</div>
@@ -306,6 +310,7 @@ new Chart(document.getElementById('landuse'), {{
 draw('provision', 'Обеспеченность школами (доля покрытого спроса)', DATA.provision, false);
 draw('fsi', 'Распределение FSI по застроенным кварталам', DATA.fsi, false);
 draw('spacematrix', 'Морфотипы Spacematrix', DATA.spacematrix, true);
+draw('strelka', 'Морфотипы «Стрелки»', DATA.strelka, true);
 </script>
 </body>
 </html>
