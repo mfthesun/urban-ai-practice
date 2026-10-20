@@ -53,8 +53,23 @@ def ru(num: int) -> str:
 
 
 # ------------------------------------------------------------------ карта
-m = folium.Map(location=[41.3925, 2.1645], zoom_start=14, tiles="CartoDB positron",
-               attr="OpenStreetMap · BlocksNet")
+m = folium.Map(location=[41.3925, 2.1645], zoom_start=14, tiles=None, control_scale=True)
+
+# Бесплатные подложки без API-ключа: Carto с 2026 требует ключ, поэтому используем Esri и OSM.
+folium.TileLayer(
+    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    attr="Esri, HERE, Garmin, OpenStreetMap contributors",
+    name="Светлая подложка (Esri)",
+    max_zoom=19,
+    show=True,
+).add_to(m)
+folium.TileLayer(
+    tiles="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attr="© OpenStreetMap contributors",
+    name="OpenStreetMap",
+    max_zoom=19,
+    show=False,
+).add_to(m)
 
 
 def choropleth(column, name, palette, vmin=None, vmax=None, show=False):
