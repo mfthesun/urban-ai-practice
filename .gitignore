@@ -42,3 +42,9 @@ ENV/
 
 # PyCharm env
 .idea
+
+# данные практики 2
+data/raw/
+*.pkl
+cache/
+*.log
