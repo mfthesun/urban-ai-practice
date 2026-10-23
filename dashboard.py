@@ -1,6 +1,7 @@
-"""Собирает dashboard.html из готовых GeoJSON и матрицы доступности.
+"""Собирает dashboard.html только из готовых GeoJSON (data/*.geojson).
 
-Ничего не скачивает и не пересчитывает метрики.
+Ничего не скачивает и не пересчитывает метрики; медианное время пешком уже сохранено
+ноутбуком в blocks_metrics.geojson (колонка median_time_min).
 Запуск:  python dashboard.py
 """
 
@@ -26,13 +27,11 @@ OUT = os.path.join(ROOT, "dashboard.html")
 
 blocks = gpd.read_file(os.path.join(DATA, "blocks_metrics.geojson"))
 schools = gpd.read_file(os.path.join(DATA, "schools.geojson"))
-acc_mx = pd.read_pickle(os.path.join(DATA, "accessibility_matrix.pkl"))
 
 if blocks.crs is None:
     blocks = blocks.set_crs("EPSG:32631")
 
 blocks["area_ha"] = blocks.area / 1e4
-blocks["median_time_min"] = acc_mx.median(axis=1).reindex(blocks.index)
 built = blocks[blocks["footprint_area"] > 0].copy()
 g = blocks.to_crs(4326)
 
@@ -96,7 +95,10 @@ def choropleth(column, name, palette, vmin=None, vmax=None, show=False):
 choropleth("fsi", "FSI — интенсивность застройки", ["#f7fbff", "#08306b"])
 choropleth("population", "Население (оценка), чел.", ["#fff5eb", "#7f2704"])
 choropleth("provision_strong", "Обеспеченность школами, доля", ["#d73027", "#fee08b", "#1a9850"], 0, 1)
-choropleth("area_accessibility", "Доступность с учётом площади", ["#ffffcc", "#800026"])
+choropleth("area_accessibility", "Доступность с учётом площади, мин", ["#ffffcc", "#800026"])
+choropleth("l", "Средняя этажность L, этажей", ["#f2f0f7", "#54278f"])
+choropleth("provision_weak", "Обеспеченность школами (мягкая), доля", ["#d73027", "#fee08b", "#1a9850"], 0, 1)
+choropleth("demand_left", "Непокрытый спрос на школы (оценка), мест", ["#fff5f0", "#a50f15"])
 choropleth("median_time_min", "Медианное время пешком, мин", ["#f1eef6", "#045a8d"])
 choropleth("capacity", "Вместимость школ (оценка), мест", ["#f7fcf5", "#00441b"])
 
@@ -121,10 +123,38 @@ def lu_style(feature):
             "color": "#4a5568", "weight": 0.3, "fillOpacity": 0.78}
 
 
-lu_layer = folium.FeatureGroup(name="Землепользование (OSM)", show=True)
-folium.GeoJson(g[["geometry", "land_use", "land_use_source"]].to_json(), style_function=lu_style,
-               tooltip=folium.GeoJsonTooltip(fields=["land_use", "land_use_source"],
-                                              aliases=["Функция", "Источник"])).add_to(lu_layer)
+# Слой землепользования: короткая подсказка при наведении и карточка со всеми показателями pipeline.ipynb по клику
+TOOLTIP_FIELDS = [
+    ("land_use", "Функция"), ("land_use_source", "Источник функции"),
+    ("residential", "Доля жилой функции"), ("business", "Доля деловой"), ("recreation", "Доля рекреационной"),
+    ("industrial", "Доля промышленной"), ("transport", "Доля транспортной"), ("special", "Доля специальной"),
+    ("agriculture", "Доля с/х"), ("area_ha", "Площадь, га"), ("population", "Население (оценка), чел."),
+    ("footprint_area", "Площадь застройки, м²"), ("build_floor_area", "Площадь этажей, м²"),
+    ("living_area", "Жилая площадь (оценка), м²"), ("non_living_area", "Нежилая площадь, м²"),
+    ("fsi", "FSI"), ("gsi", "GSI"), ("l", "Средняя этажность L"), ("mxi", "MXI"), ("osr", "OSR"),
+    ("spacematrix", "Морфотип Spacematrix"), ("strelka", "Морфотип «Стрелки»"),
+    ("median_time_min", "Медианное время пешком, мин"), ("area_accessibility", "Доступность с учётом площади, мин"),
+    ("capacity", "Мест в школах (оценка)"), ("demand", "Спрос на места (оценка)"),
+    ("demand_within", "Спрос покрыт в 15 мин"), ("demand_without", "Спрос покрыт дальше 15 мин"),
+    ("demand_left", "Спрос не покрыт"), ("capacity_left", "Свободных мест"),
+    ("provision_strong", "Обеспеченность (строгая)"), ("provision_weak", "Обеспеченность (мягкая)"),
+]
+tt_cols = [c for c, _ in TOOLTIP_FIELDS if c in g.columns]
+tt = g[["geometry"] + tt_cols].copy()
+INT_COLS = {"population", "footprint_area", "build_floor_area", "living_area", "non_living_area", "capacity",
+            "demand", "demand_within", "demand_without", "demand_left", "capacity_left"}
+for c in tt_cols:
+    if pd.api.types.is_float_dtype(tt[c]):
+        tt[c] = tt[c].round(0 if c in INT_COLS else 2)
+tt["land_use"] = tt["land_use"].astype(str).str.replace("LandUse.", "", regex=False)
+
+lu_layer = folium.FeatureGroup(name="Землепользование (OSM + оценка по застройке)", show=True)
+short = [c for c in ("land_use", "land_use_source", "population", "fsi") if c in tt_cols]
+folium.GeoJson(tt.to_json(), style_function=lu_style,
+               tooltip=folium.GeoJsonTooltip(fields=short, aliases=[dict(TOOLTIP_FIELDS)[c] for c in short]),
+               # по клику — все показатели квартала (прокручиваемая карточка)
+               popup=folium.GeoJsonPopup(fields=tt_cols, aliases=[dict(TOOLTIP_FIELDS)[c] for c in tt_cols],
+                                         maxHeight=380, maxWidth=420)).add_to(lu_layer)
 lu_layer.add_to(m)
 
 if len(schools):
@@ -188,19 +218,26 @@ METRICS_TABLE = """
 <table>
 <thead><tr><th>Показатель</th><th>Что означает</th><th>Единицы</th><th>Источник</th></tr></thead>
 <tbody>
-<tr><td>land_use</td><td>преобладающая функция квартала</td><td>категория</td><td>OSM landuse</td></tr>
-<tr><td>median_time_min</td><td>медианное время пешком до остальных кварталов</td><td>минуты</td><td>OSM walk graph</td></tr>
-<tr><td>population</td><td>оценка населения квартала</td><td>чел.</td><td>оценка BlocksNet</td></tr>
-<tr><td>capacity</td><td>оценка вместимости школ квартала</td><td>места</td><td>оценка BlocksNet</td></tr>
-<tr><td>demand_left</td><td>непокрытый спрос на школьные места</td><td>места</td><td>расчёт</td></tr>
-<tr><td>provision_strong</td><td>доля спроса, покрытая местами с учётом конкуренции</td><td>0–1</td><td>расчёт</td></tr>
-<tr><td>fsi</td><td>площадь этажей / площадь квартала</td><td>коэффициент</td><td>расчёт</td></tr>
-<tr><td>gsi</td><td>доля застроенной земли</td><td>0–1</td><td>расчёт</td></tr>
-<tr><td>mxi</td><td>смешанность функций</td><td>коэффициент</td><td>расчёт</td></tr>
-<tr><td>osr</td><td>открытые пространства на площадь этажей</td><td>коэффициент</td><td>расчёт</td></tr>
-<tr><td>spacematrix</td><td>морфотип по Spacematrix</td><td>категория</td><td>расчёт</td></tr>
-<tr><td>strelka</td><td>морфотип по классификации «Стрелки»</td><td>категория</td><td>расчёт</td></tr>
-<tr><td>area_accessibility</td><td>доступная площадь с учётом времени пути</td><td>усл. ед.</td><td>расчёт</td></tr>
+<tr><td>land_use</td><td>преобладающая функция квартала</td><td>категория</td><td>OSM landuse; где зон нет — оценка по составу застройки</td></tr>
+<tr><td>residential … agriculture</td><td>доли функций в площади квартала</td><td>0–1</td><td>assign_land_use</td></tr>
+<tr><td>median_time_min</td><td>медианное время пешком до остальных кварталов</td><td>минуты</td><td>матрица calculate_accessibility_matrix</td></tr>
+<tr><td>population</td><td>население квартала</td><td>чел.</td><td><b>оценка</b> impute_buildings</td></tr>
+<tr><td>footprint_area, build_floor_area</td><td>площадь застройки и площадь этажей</td><td>м²</td><td>OSM + восстановленная этажность</td></tr>
+<tr><td>living_area, non_living_area</td><td>жилая и нежилая площадь</td><td>м²</td><td><b>оценка</b> impute_buildings</td></tr>
+<tr><td>capacity</td><td>вместимость школ квартала</td><td>места</td><td><b>оценка</b> impute_services (250 мест на школу)</td></tr>
+<tr><td>demand</td><td>спрос на школьные места (120 на 1000 жителей)</td><td>места</td><td><b>оценка</b> competitive_provision</td></tr>
+<tr><td>demand_within / demand_without</td><td>спрос, покрытый в пределах 15 мин / дальше</td><td>места</td><td>competitive_provision</td></tr>
+<tr><td>demand_left</td><td>непокрытый спрос на школьные места</td><td>места</td><td>competitive_provision</td></tr>
+<tr><td>capacity_left</td><td>свободные места в школах квартала</td><td>места</td><td>competitive_provision</td></tr>
+<tr><td>provision_strong / provision_weak</td><td>доля спроса, покрытая в 15 мин / с учётом дальних мест</td><td>0–1</td><td>competitive_provision</td></tr>
+<tr><td>fsi</td><td>площадь этажей / площадь квартала</td><td>м²/м²</td><td>calculate_density_indicators</td></tr>
+<tr><td>gsi</td><td>доля застроенной земли</td><td>0–1</td><td>calculate_density_indicators</td></tr>
+<tr><td>l</td><td>средняя этажность (FSI / GSI)</td><td>этажи</td><td>calculate_density_indicators</td></tr>
+<tr><td>mxi</td><td>доля жилой площади в площади этажей (индекс смешанности)</td><td>0–1</td><td>calculate_density_indicators</td></tr>
+<tr><td>osr</td><td>открытое пространство на 1 м² площади этажей</td><td>м²/м²</td><td>calculate_density_indicators</td></tr>
+<tr><td>spacematrix</td><td>морфотип по Spacematrix</td><td>категория</td><td>get_spacematrix_morphotypes</td></tr>
+<tr><td>strelka</td><td>морфотип по классификации «Стрелки»</td><td>категория</td><td>get_strelka_morphotypes</td></tr>
+<tr><td>area_accessibility</td><td>среднее время пешком до всех кварталов, взвешенное по их площади (меньше — центральнее)</td><td>минуты</td><td>area_accessibility</td></tr>
 </tbody></table>
 """
 
@@ -225,7 +262,7 @@ page = f"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>Eixample, Barcelona — кварталы и метрики</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   body {{ font-family: "Segoe UI", Roboto, Arial, sans-serif; margin: 0; background: #f7f7f9; color: #1f2933; }}
   .wrap {{ max-width: 1180px; margin: 0 auto; padding: 24px; }}
@@ -265,7 +302,7 @@ page = f"""<!DOCTYPE html>
   <div class="card">
     {map_iframe}
   </div>
-  <div class="note">Переключайте слои в правом верхнем углу карты. Население, вместимость школ
+  <div class="note">Переключайте слои в правом верхнем углу карты; клик по кварталу открывает карточку со всеми его показателями. Население, вместимость школ
   и часть этажности — модельные оценки BlocksNet, а не официальная статистика.</div>
 
   <div class="grid2">
@@ -294,12 +331,12 @@ page = f"""<!DOCTYPE html>
     <h3>Топ-10 кварталов по населению</h3>
     <table>
       <thead><tr><th>Квартал</th><th>Население</th><th>Мест в школах</th><th>FSI</th><th>GSI</th>
-      <th>Обеспеченность</th><th>Доступность</th></tr></thead>
+      <th>Обеспеченность</th><th>Доступность с учётом площади, мин</th></tr></thead>
       <tbody>{top_rows}</tbody>
     </table>
   </div>
 
-  <div class="note">Ограничения: границы кварталов построены по осям улиц, а не по кадастру;<n  землепользование взято из OSM там, где есть зоны, иначе оценено по составу застройки (помечено в подсказке);<n  доступность считается только пешком, без общественного транспорта и рельефа.</div>
+  <div class="note">Ограничения: границы кварталов построены по осям улиц, а не по кадастру;<br>землепользование взято из OSM там, где есть зоны, иначе оценено по составу застройки (помечено в подсказке);<br>доступность считается только пешком, без общественного транспорта и рельефа.</div>
 </div>
 <script>
 const DATA = {json.dumps(charts, ensure_ascii=False)};
