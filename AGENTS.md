@@ -9,9 +9,11 @@
 - **Format code**: `make format` (runs isort + black)
 - **Lint code**: `make lint` (uses pylint)
 
-## Windows specifics (this machine)
+## Windows specifics (historical; Windows-only)
 
-- Python 3.12.10 is installed. Use `py -3.12`; the default `python` on PATH is also 3.12.
+These notes describe the former Windows setup. Do not apply its paths, launchers, or restrictions to the current Linux workspace.
+
+- Python 3.12.10 is installed on that Windows machine. Use `py -3.12`; the default `python` on PATH is also 3.12.
 - Keep the project at `C:\ai-course\python-package-boilerplate`. A longer path breaks `shapely`/`geopandas` with `ImportError: DLL load failed ... file name or extension is too long` (Windows MAX_PATH).
 - The virtual environment already exists in `.venv` (Python 3.12.10). Activate it with `.\.venv\Scripts\Activate.ps1`.
 - Do NOT run `make venv` or `make build`: the Makefile calls `python3`, which on this machine resolves to Python 3.14 instead of the project's 3.12.
